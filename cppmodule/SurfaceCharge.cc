@@ -81,12 +81,10 @@ SurfaceCharge::SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::
     m_polymer_count = m_group->getNumMembers()/m_polymer_length;
     // Resize center of masses array
     m_polymer_com.resize(m_polymer_count);
-// Initialize indexer, where each row consists of one polymer
+    // Initialize indexer, where each row consists of one polymer
     m_polymer_indexer = Index2D(m_polymer_length, m_polymer_count);
-
-    // Get simulation box for periodic boundary conditions
-    const BoxDim& box = m_pdata->getGlobalBox();
-    m_box_size = box.getL();
+    // Map has to be created when the object is constructed
+    RemapPolymers();
     }
 
 /*! Map the particle indices to polymers
@@ -118,39 +116,51 @@ void SurfaceCharge::CalcCenterOfMasses()
     assert(m_pdata);
     assert(m_polymer_index_map);
     assert(m_polymer_com);
+    
+    // Acquire particle data and simulation box
     ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
     ArrayHandle<Scalar4> h_pos(m_pdata->getPositions(), access_location::host, access_mode::read);
     ArrayHandle<Scalar3> h_polymer_com(m_polymer_com, access_location::host, access_mode::readwrite);
-    
+    const BoxDim& box = m_pdata->getBox();    
 
     for (unsigned int i=0; i<m_polymer_count; i++)
         {
-        Scalar4 com = make_scalar4(0.0, 0.0, 0.0, 0.0);
+        Scalar3 com = make_scalar3(0.0, 0.0, 0.0);
         // index of the previous bead
         unsigned int idx_prev; 
 
         for (unsigned int j=0; j<m_polymer_length; j++)
             {
-            const unsigned int idx = m_polymer_indexer(i, j);
-            com.x += h_pos.data[idx].x;
-            com.y += h_pos.data[idx].y;
-            com.z += h_pos.data[idx].z;
-
-            // Take care of periodic boundary conditions
-            if (j > 0)
+            const unsigned int idx = h_polymer_index_map.data[m_polymer_indexer(j, i)];
+            
+            if (j == 0)
                 {
-                if ((h_pos.data[idx].x - h_pos.data[idx_prev].x) > 0.5*m_box_size.x)
-                    {
-                    com.x -= m_box_size.x;
-                    }
-                else if ((h_pos.data[idx].x - h_pos.data[idx_prev].x) < -0.5*m_box_size.x)
-                    {
-                    com.x += m_box_size.x;
-                    }
+                com.x += h_pos.data[idx].x;
+                com.y += h_pos.data[idx].y;
+                com.z += h_pos.data[idx].z;
+                }
+            else
+                {
+                Scalar3 dVec = make_scalar3(h_pos.data[idx].x - h_pos.data[idx_prev].x,
+                                            h_pos.data[idx].y - h_pos.data[idx_prev].y,
+                                            h_pos.data[idx].z - h_pos.data[idx_prev].z);
+
+                dVec = box.minImage(dVec);
+                com.x += h_pos.data[idx_prev].x + dVec.x;
+                com.y += h_pos.data[idx_prev].y + dVec.y;
+                com.z += h_pos.data[idx_prev].z + dVec.z;
                 }
                 
             idx_prev = idx;
             }
+            
+            com.x /= m_polymer_length;
+            com.y /= m_polymer_length;
+            com.z /= m_polymer_length;
+
+            com = box.minImage(com);
+            h_polymer_com.data[i] = com;
+            std::cout<<"SurfaceCharge: polymer "<<i<<", center of mass: "<<com.x<<", "<<com.y<<", "<<com.z<<std::endl;
         }
     }
 

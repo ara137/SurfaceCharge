@@ -83,8 +83,6 @@ class SurfaceCharge : public ForceCompute
         unsigned int m_polymer_count;
         //! Indexes elements in the polymer map
         Index2D m_polymer_indexer;
-        //! Boxsize for periodic boundary conditions
-        Scalar3 m_box_size;
         
         //! Function for remapping the particles to polymers
         void RemapPolymers();
