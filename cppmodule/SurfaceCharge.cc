@@ -69,7 +69,8 @@ SurfaceCharge::SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::
     m_group = group;
     m_polymer_index_map.resize(group->getNumMembers());
     // This should be changed later to a member variable which can be changed externally
-    m_polymer_length = 32;
+    m_polymer_length = 3;
+    m_rcut2 = 9.0;
     
     // Check for stray monomers
     if (m_group->getNumMembers()%m_polymer_length != 0)
@@ -81,6 +82,9 @@ SurfaceCharge::SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::
     m_polymer_count = m_group->getNumMembers()/m_polymer_length;
     // Resize center of masses array
     m_polymer_com.resize(m_polymer_count);
+    // Resize clusterIds array
+    m_cluster_ids.resize(m_polymer_count);
+
     // Initialize indexer, where each row consists of one polymer
     m_polymer_indexer = Index2D(m_polymer_length, m_polymer_count);
     // Map has to be created when the object is constructed
@@ -126,41 +130,200 @@ void SurfaceCharge::CalcCenterOfMasses()
     for (unsigned int i=0; i<m_polymer_count; i++)
         {
         Scalar3 com = make_scalar3(0.0, 0.0, 0.0);
-        // index of the previous bead
-        unsigned int idx_prev; 
 
-        for (unsigned int j=0; j<m_polymer_length; j++)
+        // index of the first bead
+        const unsigned int idx_first = h_polymer_index_map.data[m_polymer_indexer(0, i)]; 
+
+        for (unsigned int j=1; j<m_polymer_length; j++)
             {
             const unsigned int idx = h_polymer_index_map.data[m_polymer_indexer(j, i)];
             
-            if (j == 0)
-                {
-                com.x += h_pos.data[idx].x;
-                com.y += h_pos.data[idx].y;
-                com.z += h_pos.data[idx].z;
-                }
-            else
-                {
-                Scalar3 dVec = make_scalar3(h_pos.data[idx].x - h_pos.data[idx_prev].x,
-                                            h_pos.data[idx].y - h_pos.data[idx_prev].y,
-                                            h_pos.data[idx].z - h_pos.data[idx_prev].z);
-
-                dVec = box.minImage(dVec);
-                com.x += h_pos.data[idx_prev].x + dVec.x;
-                com.y += h_pos.data[idx_prev].y + dVec.y;
-                com.z += h_pos.data[idx_prev].z + dVec.z;
-                }
-                
-            idx_prev = idx;
+            Scalar3 dvec = make_scalar3(h_pos.data[idx].x - h_pos.data[idx_first].x,
+                                        h_pos.data[idx].y - h_pos.data[idx_first].y,
+                                        h_pos.data[idx].z - h_pos.data[idx_first].z);
+            dvec = box.minImage(dvec);
+            com.x += dvec.x;
+            com.y += dvec.y;
+            com.z += dvec.z;
             }
             
-            com.x /= m_polymer_length;
-            com.y /= m_polymer_length;
-            com.z /= m_polymer_length;
+        com.x /= m_polymer_length;
+        com.y /= m_polymer_length;
+        com.z /= m_polymer_length;
+            
+        com.x += h_pos.data[idx_first].x;
+        com.y += h_pos.data[idx_first].y;
+        com.z += h_pos.data[idx_first].z;
 
-            com = box.minImage(com);
-            h_polymer_com.data[i] = com;
-            std::cout<<"SurfaceCharge: polymer "<<i<<", center of mass: "<<com.x<<", "<<com.y<<", "<<com.z<<std::endl;
+        int3 img_dummy;
+        box.wrap(com, img_dummy);
+        h_polymer_com.data[i] = com;
+        std::cout<<"SurfaceCharge: polymer "<<i<<", center of mass: "<<com.x<<", "<<com.y<<", "<<com.z<<std::endl;
+        }
+    }
+
+/*! Perform Cluster Analysis on the identified polymer center of masses
+*/
+void SurfaceCharge::ClusterAnalysis()
+    {
+    assert(m_pdata);
+    assert(m_polymer_com);
+
+    // Acquire handle to required data and simulation box
+    ArrayHandle<Scalar3> h_polymer_com(m_polymer_com, access_location::host, access_mode::read);
+    const BoxDim& box = m_pdata->getBox();
+
+    // Reset the neighborlist and reserve sufficient space in the list
+    m_neighbors.assign(m_polymer_count, vector<unsigned int>(0));
+
+    for (unsigned int i=0; i<m_polymer_count; i++)
+        {
+        m_neighbors[i].reserve(m_polymer_count);
+        }
+
+    // Identify neighbors and add them to the lists
+    for (unsigned int i=0; i<m_polymer_count; i++)
+        {
+        for (unsigned int j=i+1; j<m_polymer_count; j++)
+            {
+            Scalar3 dvec = make_scalar3(h_polymer_com.data[j].x - h_polymer_com.data[i].x,
+                                        h_polymer_com.data[j].y - h_polymer_com.data[i].y,
+                                        h_polymer_com.data[j].z - h_polymer_com.data[i].z);
+            dvec = box.minImage(dvec);
+            const Scalar dr2 = dot(dvec, dvec);
+
+            if (dr2 < m_rcut2)
+                {
+                m_neighbors[i].push_back(j);
+                m_neighbors[j].push_back(i);
+                }
+            }   
+        }
+
+    // Group polymers to clusters and assign unique cluster ids
+    unsigned int current_cluster_id = 0;
+    // Reset old cluster ids (-1 refers to unassigned polymer)
+    for (unsigned int i=0; i<m_polymer_count; i++)
+        {
+        m_cluster_ids[i] = -1;
+        }
+    
+    // Now go through all polymers, and recursively assign all neighbors a cluster id, until no more neighbors are found
+    for (unsigned int i=0; i<m_polymer_count; i++)
+        {
+            if ((m_cluster_ids[i] == -1) && (i > 0))
+                {
+                current_cluster_id++;
+                }
+            MarkParticleAndNeighbors(i, &current_cluster_id);
+        }
+    
+    // Resize internal cluster arrays
+    m_cluster_count = current_cluster_id+1;
+    m_clusters.assign(m_cluster_count, vector<unsigned int>(0));
+    m_cluster_com.resize(m_cluster_count);
+
+    // Update cluster list
+    for (unsigned int i=0; i<m_polymer_count; i++)
+        {
+        m_clusters[m_cluster_ids[i]].push_back(i);
+        }
+
+    // Calculate cluster center of masses
+    // Acquire handle to cluster center of masses
+    assert(m_cluster_com);
+    ArrayHandle<Scalar3> h_cluster_com(m_cluster_com, access_location::host, access_mode::readwrite);
+
+    for (unsigned int i=0; i<m_cluster_count; i++)
+        {
+        Scalar3 com = make_scalar3(0.0, 0.0, 0.0);
+
+        // index of the first polymer in the cluster
+        const unsigned int idx_first = m_clusters[i][0];
+
+        for (unsigned int j=1; j<m_clusters[i].size(); j++)
+            {
+            const unsigned int idx = m_clusters[i][j];
+
+            Scalar3 dvec = make_scalar3(h_polymer_com.data[idx].x - h_polymer_com.data[idx_first].x,
+                                        h_polymer_com.data[idx].y - h_polymer_com.data[idx_first].y,
+                                        h_polymer_com.data[idx].z - h_polymer_com.data[idx_first].z);
+            dvec = box.minImage(dvec);
+            com.x += dvec.x;
+            com.y += dvec.y;
+            com.z += dvec.z;
+            }
+        
+        com.x /= m_clusters[i].size();
+        com.y /= m_clusters[i].size();
+        com.z /= m_clusters[i].size();
+
+        com.x += h_polymer_com.data[idx_first].x;
+        com.y += h_polymer_com.data[idx_first].y;
+        com.z += h_polymer_com.data[idx_first].z;
+
+        int3 img_dummy;
+        box.wrap(com, img_dummy);
+        h_cluster_com.data[i] = com;
+        }
+
+    // Debug Output
+    for (unsigned int i=0; i<m_polymer_count; i++)
+        {
+        std::cout<<"Polymer "<<i<<" is in cluster "<<m_cluster_ids[i]<<std::endl;
+        }
+
+    for (unsigned int i=0; i<m_cluster_count; i++)
+        {
+        std::cout<<"Cluster "<<i<<" contains "<<m_clusters[i].size()<<" polymers."<<std::endl;
+        std::cout<<"Cluster center of mass is : "<<h_cluster_com.data[i].x<<", "<<h_cluster_com.data[i].y<<", "<<h_cluster_com.data[i].z<<std::endl;
+        }
+    }
+
+/*! Function for calculating the forces between clusters. 
+    Since the number of clusters will be comparatively low, use a simple for loop.
+*/
+void SurfaceCharge::Forces()
+    {
+    assert(m_pdata);
+    assert(m_cluster_com);
+    
+    // Acquire handle to required data and simulation box
+    ArrayHandle<Scalar3> h_acc(m_pdata->getAccelerations(), access_location::host, access_mode::readwrite);
+    ArrayHandle<Scalar3> h_cluster_com(m_polymer_com, access_location::host, access_mode::read);
+    const BoxDim& box = m_pdata->getBox();
+
+    const Scalar pot_rcut2 = 25.0;
+    // Loop over all cluster pairs
+    for (unsigned int i=0; i<m_cluster_count; i++)
+        {
+        for (unsigned int j=i+1; j<m_cluster_count; j++)
+            {
+            Scalar3 dvec = make_scalar3(h_cluster_com.data[j].x - h_cluster_com.data[i].x,
+                                        h_cluster_com.data[j].y - h_cluster_com.data[i].y,
+                                        h_cluster_com.data[j].z - h_cluster_com.data[i].z);
+            dvec = box.minImage(dvec);
+            const Scalar dr2 = dot(dvec, dvec);
+
+            if (dr2 < pot_rcut2)
+                {
+                }
+            }
+        }
+    }
+
+/*! Recursive function for assignig cluster ids
+*/
+void SurfaceCharge::MarkParticleAndNeighbors(unsigned int idx, unsigned int* cluster_id)
+    {
+    if (m_cluster_ids[idx] == -1)
+        {
+        m_cluster_ids[idx] = *cluster_id;
+
+        for (unsigned int i=0; i<m_neighbors[idx].size(); i++)
+            {
+            MarkParticleAndNeighbors(m_neighbors[idx][i], cluster_id);
+            }
         }
     }
 
@@ -169,7 +332,7 @@ void SurfaceCharge::CalcCenterOfMasses()
 */
 void SurfaceCharge::computeForces(unsigned int timestep)
     {
-    if (m_prof) m_prof->push("ExampleUpdater");
+    if (m_prof) m_prof->push("SurfaceCharge");
     
     // If particles have been resorted, update mapping
     if (m_particles_sorted)
@@ -180,19 +343,11 @@ void SurfaceCharge::computeForces(unsigned int timestep)
     // Calculate polymer center of masses
     CalcCenterOfMasses();
 
-    // access the particle data for writing on the CPU
-    assert(m_pdata);
-    assert(m_polymer_index_map);
-    ArrayHandle<Scalar4> h_pos(m_pdata->getPositions(), access_location::host, access_mode::read);
-    ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
-    // check if particles have been sorted, and then update internal polymer map if necessary
+    // Perform cluster analysis
+    ClusterAnalysis();
 
-    for (unsigned int i = 0; i < m_pdata->getN(); i++)
-        {
-        /*h_vel.data[i].x = Scalar(0.0);
-        h_vel.data[i].y = Scalar(0.0);
-        h_vel.data[i].z = Scalar(0.0);*/
-        }
+    // Calculate forces
+    Forces();
 
     if (m_prof) m_prof->pop();
     }

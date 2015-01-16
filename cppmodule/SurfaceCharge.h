@@ -77,17 +77,35 @@ class SurfaceCharge : public ForceCompute
         GPUArray<unsigned int> m_polymer_index_map;
         //! Internal list of polymer center of masses
         GPUArray<Scalar3> m_polymer_com;
+        //! Internal list of cluster center of masses
+        GPUArray<Scalar3> m_cluster_com;
         //! Polymer length
         unsigned int m_polymer_length;
         //! Polymer count
         unsigned int m_polymer_count;
+        //! Cluster count
+        unsigned int m_cluster_count;
         //! Indexes elements in the polymer map
         Index2D m_polymer_indexer;
-        
-        //! Function for remapping the particles to polymers
+        //! ClusterIds of polymers
+        vector<int> m_cluster_ids;
+        //! Neighbor list
+        vector< vector<unsigned int> > m_neighbors;
+        //! Cluster list storing members of each cluster
+        vector< vector<unsigned int> > m_clusters;
+        //! Cutoff radius for cluster analysis
+        Scalar m_rcut2;
+
+        //! Internal function for remapping the particles to polymers
         void RemapPolymers();
-        //! Function for calculating the polymer center of masses
+        //! Internal function for calculating the polymer center of masses
         void CalcCenterOfMasses();
+        //! Internal function for performing the cluster analysis
+        void ClusterAnalysis();
+        //! Internal function for calculating the forces between the clusters
+        void Forces();
+        //! Internal function for recursively assigning cluster ids to the clusters
+        void MarkParticleAndNeighbors(unsigned int, unsigned int*);
     };
 
 //! Export the SurfaceCharge class to python
