@@ -64,7 +64,7 @@ import hoomd
 class SurfaceCharge(_force):
     ## Initialize the SurfaceCharge class
     #
-    def __init__(self, group=None):
+    def __init__(self, polymer_length, group=None):
         util.print_status_line();
 
         # initialize base class
@@ -73,16 +73,24 @@ class SurfaceCharge(_force):
         # initialize the reflected c++ class
         if not globals.exec_conf.isCUDAEnabled():
             if (group is not None):
-                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, group.cpp_group);
+                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, group.cpp_group, polymer_length);
             else:
-                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, globals.group_all.cpp_group);
+                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, globals.group_all.cpp_group, polymer_length);
         else:
             if (group is not None):
-                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, group.cpp_group);
+                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, group.cpp_group, polymer_length);
             else:
-                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, globals.group_all.cpp_group);
+                self.cpp_force = _SurfaceCharge.SurfaceCharge(globals.system_definition, globals.group_all.cpp_group, polymer_length);
 
         globals.system.addCompute(self.cpp_force, self.force_name);
+
+    # provide functions for setting cutoff in clustering algorithm
+    def set_cluster_params(self, rcut):
+        self.cpp_force.setClusterParams(rcut)
+
+    #provide functions for setting parameters in potential
+    def set_force_params(self, epsilon, kappa, rcut):
+        self.cpp_force.setForceParams(epsilon, kappa, rcut)
 
     def update_coeffs(self):
         pass

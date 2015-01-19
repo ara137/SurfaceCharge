@@ -62,20 +62,22 @@ using namespace boost;
 
 /*! \param sysdef System to zero the velocities of
 */
-SurfaceCharge::SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::shared_ptr<ParticleGroup> group)
+SurfaceCharge::SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::shared_ptr<ParticleGroup> group, unsigned int polymer_length)
         : ForceCompute(sysdef)
     {
-    // assign group and resize polymer map
+    // Assign group and resize polymer map
     m_group = group;
     m_polymer_index_map.resize(group->getNumMembers());
-    // This should be changed later to a member variable which can be changed externally
-    m_polymer_length = 3;
-    m_rcut2 = 9.0;
+    m_polymer_length = polymer_length;
+
+    // Set flag that parameters need to be set
+    m_cluster_params_set = false;
+    m_force_params_set = false;
     
     // Check for stray monomers
     if (m_group->getNumMembers()%m_polymer_length != 0)
         {
-        std::cout<<"SurfaceCharge: Number of particles is not an integer multiple of monomers/chain!"<<std::endl;
+        std::cerr<<"SurfaceCharge: Number of particles is not an integer multiple of monomers/chain!"<<std::endl;
         }
 
     // Set polymer count
@@ -192,7 +194,7 @@ void SurfaceCharge::ClusterAnalysis()
             dvec = box.minImage(dvec);
             const Scalar dr2 = dot(dvec, dvec);
 
-            if (dr2 < m_rcut2)
+            if (dr2 < m_cluster_rcut2)
                 {
                 m_neighbors[i].push_back(j);
                 m_neighbors[j].push_back(i);
@@ -291,9 +293,12 @@ void SurfaceCharge::Forces()
     // Acquire handle to required data and simulation box
     ArrayHandle<Scalar3> h_acc(m_pdata->getAccelerations(), access_location::host, access_mode::readwrite);
     ArrayHandle<Scalar3> h_cluster_com(m_polymer_com, access_location::host, access_mode::read);
+    ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
     const BoxDim& box = m_pdata->getBox();
 
-    const Scalar pot_rcut2 = 25.0;
+    vector<Scalar3> cluster_forces(m_cluster_count, make_scalar3(0.0, 0.0, 0.0));
+
+    const Scalar pot_kappa2 = m_pot_kappa*m_pot_kappa;
     // Loop over all cluster pairs
     for (unsigned int i=0; i<m_cluster_count; i++)
         {
@@ -305,8 +310,50 @@ void SurfaceCharge::Forces()
             dvec = box.minImage(dvec);
             const Scalar dr2 = dot(dvec, dvec);
 
-            if (dr2 < pot_rcut2)
+            if (dr2 < m_pot_rcut2)
                 {
+                const double charge_i = m_clusters[i].size();
+                const double charge_j = m_clusters[j].size();
+                const double force = charge_i*charge_j*m_pot_epsilon*m_pot_kappa*exp(-dr2/pot_kappa2)/dr2;
+
+                cluster_forces[i].x -= force*dvec.x;
+                cluster_forces[i].y -= force*dvec.y;
+                cluster_forces[i].z -= force*dvec.z;
+                
+                cluster_forces[j].x += force*dvec.x;
+                cluster_forces[j].y += force*dvec.y;
+                cluster_forces[j].z += force*dvec.z;
+                }
+            }
+        }
+
+    // First reset all forces of all particles
+    for (unsigned int i=0; i<m_group->getNumMembers(); i++)
+        {
+        h_acc.data[i].x = 0.0;
+        h_acc.data[i].y = 0.0;
+        h_acc.data[i].z = 0.0;
+        }
+
+    // Now distribute forces in each cluster onto all monomers in that cluster
+    for (unsigned int i=0; i<m_cluster_count; i++)
+        {
+        const Scalar3 force_fraction = make_scalar3(cluster_forces[i].x/m_clusters[i].size()/m_polymer_length,
+                                                    cluster_forces[i].y/m_clusters[i].size()/m_polymer_length,
+                                                    cluster_forces[i].z/m_clusters[i].size()/m_polymer_length);
+
+        for (unsigned int j=0; j<m_clusters[i].size(); j++)
+            {
+            const unsigned int polymer_idx = m_clusters[i][j];
+
+            for (unsigned int k=0; k<m_polymer_length; k++)
+                {
+                const unsigned int monomer_idx = m_polymer_indexer(k, polymer_idx);
+                h_acc.data[monomer_idx].x = force_fraction.x;
+                h_acc.data[monomer_idx].y = force_fraction.y;
+                h_acc.data[monomer_idx].z = force_fraction.z;
+
+                std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<") on monomer: "<<monomer_idx<<" in polymer: "<<polymer_idx<<" in cluster: "<<i<<std::endl;
                 }
             }
         }
@@ -333,6 +380,13 @@ void SurfaceCharge::MarkParticleAndNeighbors(unsigned int idx, unsigned int* clu
 void SurfaceCharge::computeForces(unsigned int timestep)
     {
     if (m_prof) m_prof->push("SurfaceCharge");
+
+    // First check whether all parameters have been set
+    if ((!m_cluster_params_set) || (!m_force_params_set))
+        {
+        std::cerr<<"SurfaceCharge parameters not set. Set using set_cluster_params and set_force_params."<<std::endl;
+        return;
+        }
     
     // If particles have been resorted, update mapping
     if (m_particles_sorted)
@@ -352,10 +406,32 @@ void SurfaceCharge::computeForces(unsigned int timestep)
     if (m_prof) m_prof->pop();
     }
 
+/*! Function for setting cluster parameters
+*/
+void SurfaceCharge::setClusterParams(Scalar rcut)
+    {
+    m_cluster_rcut2 = rcut*rcut;
+    m_cluster_params_set = true;
+    std::cout<<"Cluster cutoff set to rcut="<<rcut<<std::endl;
+    }
+
+/*! Function for setting force parameters
+*/
+void SurfaceCharge::setForceParams(Scalar pot_epsilon, Scalar pot_kappa, Scalar pot_rcut)
+    {
+    m_pot_epsilon = pot_epsilon;
+    m_pot_kappa = pot_kappa;
+    m_pot_rcut2 = pot_rcut*pot_rcut;
+    m_force_params_set = true;
+    std::cout<<"Potential parameters set to: epsilon="<<m_pot_epsilon<<", kappa="<<m_pot_kappa<<", rcut="<<sqrt(m_pot_rcut2)<<std::endl;
+    }
+
 void export_SurfaceCharge()
     {
     class_<SurfaceCharge, boost::shared_ptr<SurfaceCharge>, bases<ForceCompute>, boost::noncopyable>
-    ("SurfaceCharge", init< boost::shared_ptr<SystemDefinition>, boost::shared_ptr<ParticleGroup> >())
+    ("SurfaceCharge", init< boost::shared_ptr<SystemDefinition>, boost::shared_ptr<ParticleGroup>, unsigned int >())
+    .def("setClusterParams", &SurfaceCharge::setClusterParams)
+    .def("setForceParams", &SurfaceCharge::setForceParams)
     ;
     }
 

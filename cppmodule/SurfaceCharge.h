@@ -64,8 +64,11 @@ class SurfaceCharge : public ForceCompute
     {
     public:
         //! Constructor
-        SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::shared_ptr<ParticleGroup> group);
-
+        SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::shared_ptr<ParticleGroup> group, unsigned int polymer_length);
+        //! Function for setting clustering parameters
+        void setClusterParams(Scalar);
+        //! Function for setting potential parameters
+        void setForceParams(Scalar, Scalar, Scalar);
     protected:
         //! Take one timestep forward
         virtual void computeForces(unsigned int timestep);
@@ -94,7 +97,11 @@ class SurfaceCharge : public ForceCompute
         //! Cluster list storing members of each cluster
         vector< vector<unsigned int> > m_clusters;
         //! Cutoff radius for cluster analysis
-        Scalar m_rcut2;
+        Scalar m_cluster_rcut2;
+        //! Parameters for internal potential
+        Scalar m_pot_epsilon, m_pot_kappa, m_pot_rcut2;
+        //! Parameters for checking whether all parameters have been
+        bool m_cluster_params_set, m_force_params_set;
 
         //! Internal function for remapping the particles to polymers
         void RemapPolymers();
