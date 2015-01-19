@@ -170,9 +170,13 @@ void SurfaceCharge::ClusterAnalysis()
     {
     assert(m_pdata);
     assert(m_polymer_com);
+    assert(m_polymer_index_map);
+    assert(m_cluster_com);
+    assert(m_cluster_rg);
 
     // Acquire handle to required data and simulation box
     ArrayHandle<Scalar3> h_polymer_com(m_polymer_com, access_location::host, access_mode::read);
+    ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
     const BoxDim& box = m_pdata->getBox();
 
     // Reset the neighborlist and reserve sufficient space in the list
@@ -224,6 +228,7 @@ void SurfaceCharge::ClusterAnalysis()
     m_cluster_count = current_cluster_id+1;
     m_clusters.assign(m_cluster_count, vector<unsigned int>(0));
     m_cluster_com.resize(m_cluster_count);
+    m_cluster_rg.resize(m_cluster_count);
 
     // Update cluster list
     for (unsigned int i=0; i<m_polymer_count; i++)
@@ -231,11 +236,13 @@ void SurfaceCharge::ClusterAnalysis()
         m_clusters[m_cluster_ids[i]].push_back(i);
         }
 
-    // Calculate cluster center of masses
-    // Acquire handle to cluster center of masses
-    assert(m_cluster_com);
+    // Calculate cluster center of masses of and its radius of gyration
+    // Acquire handle to respetive lists
     ArrayHandle<Scalar3> h_cluster_com(m_cluster_com, access_location::host, access_mode::readwrite);
+    ArrayHandle<Scalar> h_cluster_rg(m_cluster_rg, access_location::host, access_mode::readwrite);
+    ArrayHandle<Scalar4> h_pos(m_pdata->getPositions(), access_location::host, access_mode::readwrite);
 
+    // Compute center of mass
     for (unsigned int i=0; i<m_cluster_count; i++)
         {
         Scalar3 com = make_scalar3(0.0, 0.0, 0.0);
@@ -269,6 +276,33 @@ void SurfaceCharge::ClusterAnalysis()
         h_cluster_com.data[i] = com;
         }
 
+    // Computer radius of gyration
+    for (unsigned int i=0; i<m_cluster_count; i++)
+        {
+        double rg2 = 0.0;
+
+        for (unsigned int j=0; j<m_clusters[i].size(); j++)
+            {
+            const unsigned int polymer_idx = m_clusters[i][j];
+
+            for (unsigned int k=0; k<m_polymer_length; k++)
+                {
+                const unsigned int monomer_idx = m_polymer_indexer(k, polymer_idx);
+                Scalar3 dvec = make_scalar3(h_pos.data[monomer_idx].x - h_cluster_com.data[i].x,
+                                            h_pos.data[monomer_idx].y - h_cluster_com.data[i].y,
+                                            h_pos.data[monomer_idx].z - h_cluster_com.data[i].z);
+                dvec = box.minImage(dvec);
+                rg2 += dot(dvec, dvec);
+                }
+            }
+        rg2 /= m_clusters[i].size();
+        rg2 /= m_polymer_length;
+        h_cluster_rg.data[i] = sqrt(rg2);
+
+        std::cout<<"Cluster "<<i<<" has Rg="<<h_cluster_rg.data[i]<<std::endl;
+        std::cout<<"Cluster size: "<<m_clusters[i].size()<<std::endl;
+        }
+
     // Debug Output
     for (unsigned int i=0; i<m_polymer_count; i++)
         {
@@ -289,10 +323,13 @@ void SurfaceCharge::Forces()
     {
     assert(m_pdata);
     assert(m_cluster_com);
+    assert(m_cluster_rg);
+    assert(m_polymer_index_map);
     
     // Acquire handle to required data and simulation box
     ArrayHandle<Scalar3> h_acc(m_pdata->getAccelerations(), access_location::host, access_mode::readwrite);
-    ArrayHandle<Scalar3> h_cluster_com(m_polymer_com, access_location::host, access_mode::read);
+    ArrayHandle<Scalar3> h_cluster_com(m_cluster_com, access_location::host, access_mode::read);
+    ArrayHandle<Scalar> h_cluster_rg(m_cluster_rg, access_location::host, access_mode::read);
     ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
     const BoxDim& box = m_pdata->getBox();
 
@@ -308,13 +345,20 @@ void SurfaceCharge::Forces()
                                         h_cluster_com.data[j].y - h_cluster_com.data[i].y,
                                         h_cluster_com.data[j].z - h_cluster_com.data[i].z);
             dvec = box.minImage(dvec);
+
+            const double sigma = h_cluster_rg.data[i] + h_cluster_rg.data[j];
+            dvec.x /= sigma;
+            dvec.y /= sigma;
+            dvec.z /= sigma;
             const Scalar dr2 = dot(dvec, dvec);
 
             if (dr2 < m_pot_rcut2)
                 {
-                const double charge_i = m_clusters[i].size();
-                const double charge_j = m_clusters[j].size();
-                const double force = charge_i*charge_j*m_pot_epsilon*m_pot_kappa*exp(-dr2/pot_kappa2)/dr2;
+                const double charge_i = 12.56637061*h_cluster_rg.data[i]*h_cluster_rg.data[i]; // prefactor is 4PI
+                const double charge_j = 12.56637061*h_cluster_rg.data[j]*h_cluster_rg.data[j]; // prefactor is 4PI
+                const double force = m_pot_epsilon*m_pot_epsilon*charge_i*charge_j/dr2/sigma;
+
+                //std::cout<<"force: r="<<sqrt(dr2)<<", charge_i="<<charge_i<<", charge_j="<<charge_j<<", sigma="<<sigma<<std::endl;
 
                 cluster_forces[i].x -= force*dvec.x;
                 cluster_forces[i].y -= force*dvec.y;
@@ -353,7 +397,7 @@ void SurfaceCharge::Forces()
                 h_acc.data[monomer_idx].y = force_fraction.y;
                 h_acc.data[monomer_idx].z = force_fraction.z;
 
-                std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<") on monomer: "<<monomer_idx<<" in polymer: "<<polymer_idx<<" in cluster: "<<i<<std::endl;
+                //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<") on monomer: "<<monomer_idx<<" in polymer: "<<polymer_idx<<" in cluster: "<<i<<std::endl;
                 }
             }
         }
