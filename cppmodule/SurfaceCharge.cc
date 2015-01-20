@@ -103,9 +103,7 @@ void SurfaceCharge::RemapPolymers()
     ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::readwrite);
     ArrayHandle<unsigned int> h_tag(m_pdata->getTags(), access_location::host, access_mode::read);
 
-    std::cout<<std::endl;
-    std::cout<<"SurfaceCharge: Remapping Polymers; m_polymer_length: "<<m_polymer_length<<std::endl;
-    std::cout<<std::endl;
+    //std::cout<<"SurfaceCharge: Remapping Polymers!"<<std::endl;
     // Update the mapping
     for (unsigned int i=0; i<m_group->getNumMembers(); i++)
         {
@@ -162,7 +160,7 @@ void SurfaceCharge::CalcCenterOfMasses()
         int3 img_dummy;
         box.wrap(com, img_dummy);
         h_polymer_com.data[i] = com;
-        std::cout<<"SurfaceCharge: polymer "<<i<<", center of mass: "<<com.x<<", "<<com.y<<", "<<com.z<<std::endl;
+        //std::cout<<"SurfaceCharge: polymer "<<i<<", center of mass: "<<com.x<<", "<<com.y<<", "<<com.z<<std::endl;
         }
     }
 
@@ -279,7 +277,6 @@ void SurfaceCharge::ClusterAnalysis()
         }
 
     // Computer radius of gyration
-    std::cout<<"Computing rG"<<std::endl;
     for (unsigned int i=0; i<m_cluster_count; i++)
         {
         double rg2 = 0.0;
@@ -296,23 +293,15 @@ void SurfaceCharge::ClusterAnalysis()
                                             h_pos.data[monomer_idx].z - h_cluster_com.data[i].z);
                 dvec = box.minImage(dvec);
                 rg2 += dot(dvec, dvec);
-
-                std::cout<<"cluster com: "<<h_cluster_com.data[i].x<<", "<<h_cluster_com.data[i].y<<", "<<h_cluster_com.data[i].z<<std::endl;
-                std::cout<<"polymer "<<polymer_idx<<", monomer "<<k<<" site "<<monomer_idx<<": "<<h_pos.data[monomer_idx].x<<", "<<h_pos.data[monomer_idx].y<<", "<<h_pos.data[monomer_idx].z<<std::endl;
-                std::cout<<"dist: "<<dvec.x<<", "<<dvec.y<<", "<<dvec.z<<", rg2: "<<rg2<<std::endl;
                 }
             }
         rg2 /= m_clusters[i].size();
         rg2 /= m_polymer_length;
         h_cluster_rg.data[i] = sqrt(rg2);
-
-        std::cout<<"Cluster "<<i<<" has Rg="<<h_cluster_rg.data[i]<<std::endl;
-        std::cout<<"Cluster size: "<<m_clusters[i].size()<<std::endl;
         }
-    std::cout<<"end rG calculation"<<std::endl;
 
     // Debug Output
-    for (unsigned int i=0; i<m_polymer_count; i++)
+    /*for (unsigned int i=0; i<m_polymer_count; i++)
         {
         std::cout<<"Polymer "<<i<<" is in cluster "<<m_cluster_ids[i]<<std::endl;
         }
@@ -321,7 +310,7 @@ void SurfaceCharge::ClusterAnalysis()
         {
         std::cout<<"Cluster "<<i<<" contains "<<m_clusters[i].size()<<" polymers."<<std::endl;
         std::cout<<"Cluster center of mass is : "<<h_cluster_com.data[i].x<<", "<<h_cluster_com.data[i].y<<", "<<h_cluster_com.data[i].z<<std::endl;
-        }
+        }*/
     }
 
 /*! Function for calculating the forces between clusters. 
@@ -335,7 +324,7 @@ void SurfaceCharge::Forces()
     assert(m_polymer_index_map);
     
     // Acquire handle to required data and simulation box
-    ArrayHandle<Scalar3> h_acc(m_pdata->getAccelerations(), access_location::host, access_mode::readwrite);
+    ArrayHandle<Scalar4> h_forces(m_force, access_location::host, access_mode::readwrite);
     ArrayHandle<Scalar3> h_cluster_com(m_cluster_com, access_location::host, access_mode::read);
     ArrayHandle<Scalar> h_cluster_rg(m_cluster_rg, access_location::host, access_mode::read);
     ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
@@ -366,8 +355,6 @@ void SurfaceCharge::Forces()
                 const double charge_j = 12.56637061*h_cluster_rg.data[j]*h_cluster_rg.data[j]; // prefactor is 4PI
                 const double force = m_pot_epsilon*m_pot_epsilon*charge_i*charge_j/dr2/sigma;
 
-               //std::cout<<"force: r="<<sqrt(dr2)<<", charge_i="<<charge_i<<", charge_j="<<charge_j<<", sigma="<<sigma<<std::endl;
-
                 cluster_forces[i].x -= force*dvec.x;
                 cluster_forces[i].y -= force*dvec.y;
                 cluster_forces[i].z -= force*dvec.z;
@@ -382,9 +369,9 @@ void SurfaceCharge::Forces()
     // First reset all forces of all particles
     for (unsigned int i=0; i<m_group->getNumMembers(); i++)
         {
-        h_acc.data[i].x = 0.0;
-        h_acc.data[i].y = 0.0;
-        h_acc.data[i].z = 0.0;
+        h_forces.data[i].x = 0.0;
+        h_forces.data[i].y = 0.0;
+        h_forces.data[i].z = 0.0;
         }
 
     // Now distribute forces in each cluster onto all monomers in that cluster
@@ -398,14 +385,14 @@ void SurfaceCharge::Forces()
             {
             const unsigned int polymer_idx = m_clusters[i][j];
 
-            std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<"), cluster:"<<i<<std::endl;
+            //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<"), cluster:"<<i<<std::endl;
 
             for (unsigned int k=0; k<m_polymer_length; k++)
                 {
                 const unsigned int monomer_idx = h_polymer_index_map.data[m_polymer_indexer(k, polymer_idx)];
-                h_acc.data[monomer_idx].x = force_fraction.x;
-                h_acc.data[monomer_idx].y = force_fraction.y;
-                h_acc.data[monomer_idx].z = force_fraction.z;
+                h_forces.data[monomer_idx].x = force_fraction.x;
+                h_forces.data[monomer_idx].y = force_fraction.y;
+                h_forces.data[monomer_idx].z = force_fraction.z;
 
                 //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<") on monomer: "<<monomer_idx<<" in polymer: "<<polymer_idx<<" in cluster: "<<i<<std::endl;
                 }
