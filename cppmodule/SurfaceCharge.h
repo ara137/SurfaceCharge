@@ -66,9 +66,13 @@ class SurfaceCharge : public ForceCompute
         //! Constructor
         SurfaceCharge(boost::shared_ptr<SystemDefinition> sysdef, boost::shared_ptr<ParticleGroup> group, unsigned int polymer_length);
         //! Function for setting clustering parameters
-        void setClusterParams(Scalar);
+        void setClusterParams(Scalar cluster_rcut);
         //! Function for setting potential parameters
-        void setForceParams(Scalar, Scalar, Scalar);
+        void setForceParams(Scalar pot_epsilon, Scalar pot_kappa, Scalar pot_rcut);
+        //! Returns a list of log quantities this compute calculates
+        virtual vector<string> getProvidedLogQuantities();
+        //! Calculate the requested log value and returns it
+        virtual Scalar getLogValue(const std::string& quantity, unsigned int timestep);
     protected:
         //! Take one timestep forward
         virtual void computeForces(unsigned int timestep);

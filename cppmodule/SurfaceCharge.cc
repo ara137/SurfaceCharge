@@ -330,7 +330,7 @@ void SurfaceCharge::Forces()
     ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
     const BoxDim& box = m_pdata->getBox();
 
-    vector<Scalar3> cluster_forces(m_cluster_count, make_scalar3(0.0, 0.0, 0.0));
+    vector<Scalar4> cluster_forces(m_cluster_count, make_scalar4(0.0, 0.0, 0.0, 0.0));
 
     const Scalar pot_kappa2 = m_pot_kappa*m_pot_kappa;
     // Loop over all cluster pairs
@@ -342,26 +342,26 @@ void SurfaceCharge::Forces()
                                         h_cluster_com.data[j].y - h_cluster_com.data[i].y,
                                         h_cluster_com.data[j].z - h_cluster_com.data[i].z);
             dvec = box.minImage(dvec);
-
-            const double sigma = h_cluster_rg.data[i] + h_cluster_rg.data[j];
-            dvec.x /= sigma;
-            dvec.y /= sigma;
-            dvec.z /= sigma;
             const Scalar dr2 = dot(dvec, dvec);
 
             if (dr2 < m_pot_rcut2)
                 {
-                const double charge_i = 12.56637061*h_cluster_rg.data[i]*h_cluster_rg.data[i]; // prefactor is 4PI
-                const double charge_j = 12.56637061*h_cluster_rg.data[j]*h_cluster_rg.data[j]; // prefactor is 4PI
-                const double force = m_pot_epsilon*m_pot_epsilon*charge_i*charge_j/dr2/sigma;
+                //const double charge_i = 12.56637061*h_cluster_rg.data[i]*h_cluster_rg.data[i]; // prefactor is 4PI
+                //const double charge_j = 12.56637061*h_cluster_rg.data[j]*h_cluster_rg.data[j]; // prefactor is 4PI
+                                
+                const Scalar dr = sqrt(dr2);
+                const Scalar yukawa = m_pot_epsilon*exp(-m_pot_kappa*dr)/dr;
+                const Scalar force = yukawa*(1.0/dr2 + m_pot_kappa/dr);
 
                 cluster_forces[i].x -= force*dvec.x;
                 cluster_forces[i].y -= force*dvec.y;
                 cluster_forces[i].z -= force*dvec.z;
+                cluster_forces[i].w += 0.5*yukawa;
                 
                 cluster_forces[j].x += force*dvec.x;
                 cluster_forces[j].y += force*dvec.y;
                 cluster_forces[j].z += force*dvec.z;
+                cluster_forces[j].w += 0.5*yukawa;
                 }
             }
         }
@@ -377,15 +377,16 @@ void SurfaceCharge::Forces()
     // Now distribute forces in each cluster onto all monomers in that cluster
     for (unsigned int i=0; i<m_cluster_count; i++)
         {
-        const Scalar3 force_fraction = make_scalar3(cluster_forces[i].x/m_clusters[i].size()/m_polymer_length,
+        const Scalar4 force_fraction = make_scalar4(cluster_forces[i].x/m_clusters[i].size()/m_polymer_length,
                                                     cluster_forces[i].y/m_clusters[i].size()/m_polymer_length,
-                                                    cluster_forces[i].z/m_clusters[i].size()/m_polymer_length);
+                                                    cluster_forces[i].z/m_clusters[i].size()/m_polymer_length,
+                                                    cluster_forces[i].w/m_clusters[i].size()/m_polymer_length);
 
         for (unsigned int j=0; j<m_clusters[i].size(); j++)
             {
             const unsigned int polymer_idx = m_clusters[i][j];
 
-            //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<"), cluster:"<<i<<std::endl;
+            //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<", "<<force_fraction.w<<"), cluster:"<<i<<std::endl;
 
             for (unsigned int k=0; k<m_polymer_length; k++)
                 {
@@ -393,6 +394,7 @@ void SurfaceCharge::Forces()
                 h_forces.data[monomer_idx].x = force_fraction.x;
                 h_forces.data[monomer_idx].y = force_fraction.y;
                 h_forces.data[monomer_idx].z = force_fraction.z;
+                h_forces.data[monomer_idx].w = force_fraction.w;
 
                 //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<") on monomer: "<<monomer_idx<<" in polymer: "<<polymer_idx<<" in cluster: "<<i<<std::endl;
                 }
@@ -449,11 +451,11 @@ void SurfaceCharge::computeForces(unsigned int timestep)
 
 /*! Function for setting cluster parameters
 */
-void SurfaceCharge::setClusterParams(Scalar rcut)
+void SurfaceCharge::setClusterParams(Scalar cluster_rcut)
     {
-    m_cluster_rcut2 = rcut*rcut;
+    m_cluster_rcut2 = cluster_rcut*cluster_rcut;
     m_cluster_params_set = true;
-    std::cout<<"Cluster cutoff set to rcut="<<rcut<<std::endl;
+    std::cout<<"Cluster cutoff set to "<<cluster_rcut<<std::endl;
     }
 
 /*! Function for setting force parameters
@@ -465,6 +467,30 @@ void SurfaceCharge::setForceParams(Scalar pot_epsilon, Scalar pot_kappa, Scalar 
     m_pot_rcut2 = pot_rcut*pot_rcut;
     m_force_params_set = true;
     std::cout<<"Potential parameters set to: epsilon="<<m_pot_epsilon<<", kappa="<<m_pot_kappa<<", rcut="<<sqrt(m_pot_rcut2)<<std::endl;
+    }
+
+/*! SurfaceCharge provides 
+    - \c surface_charge_energy
+*/
+vector<string> SurfaceCharge::getProvidedLogQuantities()
+    {
+    vector<string> list;
+    list.push_back("surface_charge_energy");
+    return list;
+    }
+
+Scalar SurfaceCharge::getLogValue(const string& quantity, unsigned int timestep)
+    {
+    if (quantity == string("surface_charge_energy"))
+        {
+        compute(timestep);
+        return calcEnergySum();
+        }
+    else
+        {
+        m_exec_conf->msg->error()<<"SurfaceCharge "<<quantity<<" is not a valid log quantity"<<endl;
+        throw runtime_error("Error getting log value");
+        }
     }
 
 void export_SurfaceCharge()

@@ -85,12 +85,12 @@ class SurfaceCharge(_force):
         globals.system.addCompute(self.cpp_force, self.force_name);
 
     # provide functions for setting cutoff in clustering algorithm
-    def set_cluster_params(self, rcut):
-        self.cpp_force.setClusterParams(rcut)
+    def set_cluster_params(self, r_cut):
+        self.cpp_force.setClusterParams(r_cut)
 
     #provide functions for setting parameters in potential
-    def set_force_params(self, epsilon, kappa, rcut):
-        self.cpp_force.setForceParams(epsilon, kappa, rcut)
+    def set_force_params(self, epsilon, kappa, r_cut):
+        self.cpp_force.setForceParams(epsilon, kappa, r_cut)
 
     def update_coeffs(self):
         pass
