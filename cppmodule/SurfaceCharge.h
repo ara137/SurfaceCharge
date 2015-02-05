@@ -86,14 +86,16 @@ class SurfaceCharge : public ForceCompute
         GPUArray<Scalar3> m_polymer_com;
         //! Internal list of cluster center of masses
         GPUArray<Scalar3> m_cluster_com;
-        //! Internal list of cluster radius of gyration
-        GPUArray<Scalar> m_cluster_rg;
+        //! Internal list of squared radius of gyration of cluster
+        GPUArray<Scalar> m_cluster_rg2;
         //! Polymer length
         unsigned int m_polymer_length;
         //! Polymer count
         unsigned int m_polymer_count;
         //! Cluster count
         unsigned int m_cluster_count;
+        //! Current timestep
+        unsigned int m_timestep;
         //! Indexes elements in the polymer map
         Index2D m_polymer_indexer;
         //! ClusterIds of polymers
