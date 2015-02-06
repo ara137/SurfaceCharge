@@ -53,4 +53,4 @@
 
 # NOTE: adjust the import statement to match the name of the template
 from hoomd_plugins.SurfaceCharge import computeForce
-
+from hoomd_plugins.SurfaceCharge import dumpWriter

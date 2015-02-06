@@ -49,6 +49,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // Include the defined classes that are to be exported to python
 #include "SurfaceCharge.h"
+#include "HOOMDTypeDumpWriter.h"
 
 // Include boost.python to do the exporting
 #include <boost/python.hpp>
@@ -59,5 +60,6 @@ using namespace boost::python;
 BOOST_PYTHON_MODULE(_SurfaceCharge)
     {
     export_SurfaceCharge();
+    export_HOOMDTypeDumpWriter();
     }
 
