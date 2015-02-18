@@ -89,8 +89,8 @@ class SurfaceCharge(_force):
         self.cpp_force.setClusterParams(r_cut)
 
     #provide functions for setting parameters in potential
-    def set_force_params(self, epsilon, kappa, r_cut):
-        self.cpp_force.setForceParams(epsilon, kappa, r_cut)
+    def set_force_params(self, epsilon, kappa, r_cut, bjerrum_length):
+        self.cpp_force.setForceParams(epsilon, kappa, r_cut, bjerrum_length)
 
     def update_coeffs(self):
         pass

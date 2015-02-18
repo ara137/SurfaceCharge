@@ -68,7 +68,7 @@ class SurfaceCharge : public ForceCompute
         //! Function for setting clustering parameters
         void setClusterParams(Scalar cluster_rcut);
         //! Function for setting potential parameters
-        void setForceParams(Scalar pot_epsilon, Scalar pot_kappa, Scalar pot_rcut);
+        void setForceParams(Scalar pot_epsilon, Scalar pot_kappa, Scalar pot_rcut, Scalar lambda);
         //! Returns a list of log quantities this compute calculates
         virtual vector<string> getProvidedLogQuantities();
         //! Calculate the requested log value and returns it
@@ -86,8 +86,8 @@ class SurfaceCharge : public ForceCompute
         GPUArray<Scalar3> m_polymer_com;
         //! Internal list of cluster center of masses
         GPUArray<Scalar3> m_cluster_com;
-        //! Internal list of squared radius of gyration of cluster
-        GPUArray<Scalar> m_cluster_rg2;
+        //! Internal list of radius of gyration of clusters
+        GPUArray<Scalar> m_cluster_rg;
         //! Polymer length
         unsigned int m_polymer_length;
         //! Polymer count
@@ -107,7 +107,9 @@ class SurfaceCharge : public ForceCompute
         //! Cutoff radius for cluster analysis
         Scalar m_cluster_rcut2;
         //! Parameters for internal potential
-        Scalar m_pot_epsilon, m_pot_kappa, m_pot_rcut2;
+        Scalar m_pot_epsilon, m_pot_kappa, m_pot_rcut2, m_pot_lambda;
+        //! Parameters for smoothing potential
+        Scalar m_smooth_ron, m_smooth_ron2, m_smooth_denom_inv;
         //! Parameters for checking whether all parameters have been
         bool m_cluster_params_set, m_force_params_set;
 

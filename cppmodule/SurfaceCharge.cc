@@ -185,7 +185,7 @@ void SurfaceCharge::ClusterAnalysis()
     assert(m_polymer_com);
     assert(m_polymer_index_map);
     assert(m_cluster_com);
-    assert(m_cluster_rg2);
+    assert(m_cluster_rg);
 
     // Acquire handle to required data and simulation box
     ArrayHandle<Scalar3> h_polymer_com(m_polymer_com, access_location::host, access_mode::read);
@@ -242,7 +242,7 @@ void SurfaceCharge::ClusterAnalysis()
     m_cluster_count = current_cluster_id+1;
     m_clusters.assign(m_cluster_count, vector<unsigned int>(0));
     m_cluster_com.resize(m_cluster_count);
-    m_cluster_rg2.resize(m_cluster_count);
+    m_cluster_rg.resize(m_cluster_count);
 
     // Update cluster list
     for (unsigned int i=0; i<m_polymer_count; i++)
@@ -253,7 +253,7 @@ void SurfaceCharge::ClusterAnalysis()
     // Calculate cluster center of masses and its radius of gyration
     // Acquire handle to respetive lists
     ArrayHandle<Scalar3> h_cluster_com(m_cluster_com, access_location::host, access_mode::readwrite);
-    ArrayHandle<Scalar> h_cluster_rg2(m_cluster_rg2, access_location::host, access_mode::readwrite);
+    ArrayHandle<Scalar> h_cluster_rg(m_cluster_rg, access_location::host, access_mode::readwrite);
     ArrayHandle<Scalar4> h_pos(m_pdata->getPositions(), access_location::host, access_mode::readwrite);
 
     // Compute center of mass
@@ -323,17 +323,17 @@ void SurfaceCharge::ClusterAnalysis()
             }
         rg2 /= m_clusters[i].size();
         rg2 /= m_polymer_length;
-        h_cluster_rg2.data[i] = rg2;
+        h_cluster_rg.data[i] = sqrt(rg2);
         }
 
     // Debug Output
     for (unsigned int i=0; i<m_cluster_count; i++)
         {
-        if (m_timestep%50 == 0)
+        if (m_timestep%200 == 0)
             {
             std::cout<<"Cluster "<<i<<" contains "<<m_clusters[i].size()<<" polymers. ";
             std::cout<<"Cluster center of mass is: "<<h_cluster_com.data[i].x<<", "<<h_cluster_com.data[i].y<<", "<<h_cluster_com.data[i].z<<". ";
-            std::cout<<"Cluster rG: "<<sqrt(h_cluster_rg2.data[i])<<std::endl;
+            std::cout<<"Cluster rG: "<<h_cluster_rg.data[i]<<std::endl;
             
             // output monomer positions
             /*for (unsigned int j=0; j<m_clusters[i].size(); j++)
@@ -359,17 +359,20 @@ void SurfaceCharge::Forces()
     {
     assert(m_pdata);
     assert(m_cluster_com);
-    assert(m_cluster_rg2);
+    assert(m_cluster_rg);
     assert(m_polymer_index_map);
     
     // Acquire handle to required data and simulation box
     ArrayHandle<Scalar4> h_forces(m_force, access_location::host, access_mode::readwrite);
     ArrayHandle<Scalar3> h_cluster_com(m_cluster_com, access_location::host, access_mode::read);
-    ArrayHandle<Scalar> h_cluster_rg2(m_cluster_rg2, access_location::host, access_mode::read);
+    ArrayHandle<Scalar> h_cluster_rg(m_cluster_rg, access_location::host, access_mode::read);
     ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::read);
     const BoxDim& box = m_pdata->getBox();
 
     vector<Scalar4> cluster_forces(m_cluster_count, make_scalar4(0.0, 0.0, 0.0, 0.0));
+
+    // Since the Yukawa potential decays very slowly, we need a smoothing potential to take care of
+    // discontinuities at r_cut
 
     // Loop over all cluster pairs
     for (unsigned int i=0; i<m_cluster_count; i++)
@@ -381,15 +384,34 @@ void SurfaceCharge::Forces()
                                         h_cluster_com.data[j].z - h_cluster_com.data[i].z);
             dvec = box.minImage(dvec);
             const Scalar dr2 = dot(dvec, dvec);
-
+            
             if (dr2 < m_pot_rcut2)
                 {
-                const double charge_i = 12.56637061*h_cluster_rg2.data[i]; // prefactor is 4PI
-                const double charge_j = 12.56637061*h_cluster_rg2.data[j]; // prefactor is 4PI
+                const double charge_i = (1.0 + m_pot_kappa*h_cluster_rg.data[i])*m_pot_epsilon*h_cluster_rg.data[i]/m_pot_lambda;
+                const double charge_j = (1.0 + m_pot_kappa*h_cluster_rg.data[j])*m_pot_epsilon*h_cluster_rg.data[j]/m_pot_lambda;
+
+                const double prefactor_i = charge_i*exp(m_pot_kappa*h_cluster_rg.data[i])/(1.0 + m_pot_kappa*h_cluster_rg.data[i]);
+                const double prefactor_j = charge_j*exp(m_pot_kappa*h_cluster_rg.data[j])/(1.0 + m_pot_kappa*h_cluster_rg.data[j]);
                                 
                 const Scalar dr = sqrt(dr2);
-                const Scalar yukawa = charge_i*charge_j*m_pot_epsilon*exp(-m_pot_kappa*dr)/dr;
-                const Scalar force = yukawa*(1.0/dr2 + m_pot_kappa/dr);
+
+                Scalar yukawa = m_pot_lambda*prefactor_i*prefactor_j*exp(-m_pot_kappa*dr)/dr;
+                Scalar force = yukawa*(1.0/dr2 + m_pot_kappa/dr);
+
+                // Smooth potential, if r_on < r < r_cut
+                // See libhoomd/potentials/PotentialPair.h
+                if (dr > m_smooth_ron)
+                    {
+                    const Scalar old_energy = yukawa;
+                    const Scalar old_force = force;
+
+                    const Scalar dr2_minus_rcut2 = dr2 - m_pot_rcut2;
+                    const Scalar s = dr2_minus_rcut2*dr2_minus_rcut2*(m_pot_rcut2 + 2.0*dr2 - 3.0*m_smooth_ron2)*m_smooth_denom_inv;
+                    const Scalar ds_dr_divr = 12.0*(dr2 - m_smooth_ron2)*dr2_minus_rcut2*m_smooth_denom_inv;
+
+                    yukawa = s*old_energy;
+                    force = s*old_force - ds_dr_divr*old_energy;
+                    }
 
                 cluster_forces[i].x -= force*dvec.x;
                 cluster_forces[i].y -= force*dvec.y;
@@ -401,9 +423,9 @@ void SurfaceCharge::Forces()
                 cluster_forces[j].z += force*dvec.z;
                 cluster_forces[j].w += 0.5*yukawa;
 
-                if (m_timestep%50 == 0)
+                if (m_timestep%200 == 0)
                     {
-                    cout<<"force between "<<i<<", "<<j<<" charge_i: "<<charge_i<<", charge_j: "<<charge_j<<", dr: "<<dr<<", force: "<<force<<endl;
+                    cout<<"force between "<<i<<", "<<j<<" charge_i: "<<charge_i<<", charge_j: "<<charge_j<<", prefactor_i: "<<prefactor_i<<", prefactor_j: "<<prefactor_j<<", dr: "<<dr<<", yukawa: "<<yukawa<<", force: "<<force<<endl;
                     }
                 }
             }
@@ -429,7 +451,7 @@ void SurfaceCharge::Forces()
             {
             const unsigned int polymer_idx = m_clusters[i][j];
 
-            if (m_timestep%50 == 0)
+            if (m_timestep%200 == 0)
                 {
                 //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<", "<<force_fraction.w<<"), cluster:"<<i<<std::endl;
                 }
@@ -508,13 +530,25 @@ void SurfaceCharge::setClusterParams(Scalar cluster_rcut)
 
 /*! Function for setting force parameters
 */
-void SurfaceCharge::setForceParams(Scalar pot_epsilon, Scalar pot_kappa, Scalar pot_rcut)
+void SurfaceCharge::setForceParams(Scalar pot_epsilon, Scalar pot_kappa, Scalar pot_rcut, Scalar pot_lambda)
     {
+    // Set parameters for Yukawa potential
     m_pot_epsilon = pot_epsilon;
     m_pot_kappa = pot_kappa;
     m_pot_rcut2 = pot_rcut*pot_rcut;
+    m_pot_lambda = pot_lambda;
+
+    // Set parameters for smoothing potential
+    m_smooth_ron = 0.8*pot_rcut;
+    m_smooth_ron2 = m_smooth_ron*m_smooth_ron;
+    m_smooth_denom_inv = 1.0/pow((m_pot_rcut2-m_smooth_ron2), 3.0);
+
     m_force_params_set = true;
-    std::cout<<"Potential parameters set to: epsilon="<<m_pot_epsilon<<", kappa="<<m_pot_kappa<<", rcut="<<sqrt(m_pot_rcut2)<<std::endl;
+    std::cout<<"Potential parameters set to: epsilon="<<m_pot_epsilon
+             <<", kappa="<<m_pot_kappa
+             <<", rcut="<<sqrt(m_pot_rcut2)
+             <<", ron="<<m_smooth_ron
+             <<", lambda="<<m_pot_lambda<<std::endl;
     }
 
 /*! SurfaceCharge provides 
