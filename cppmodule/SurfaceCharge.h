@@ -112,6 +112,8 @@ class SurfaceCharge : public ForceCompute
         Scalar m_smooth_ron, m_smooth_ron2, m_smooth_denom_inv;
         //! Parameters for checking whether all parameters have been
         bool m_cluster_params_set, m_force_params_set;
+        //! Average cluster occupation number and Rg
+        Scalar m_cluster_avg_nocc, m_cluster_avg_rg;
 
         //! Internal function for remapping the particles to polymers
         void RemapPolymers();

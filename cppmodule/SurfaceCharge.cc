@@ -303,8 +303,12 @@ void SurfaceCharge::ClusterAnalysis()
         }
 
     // Computer radius of gyration
+    m_cluster_avg_nocc = 0.0;
+    m_cluster_avg_rg = 0.0;
+
     for (unsigned int i=0; i<m_cluster_count; i++)
         {
+        m_cluster_avg_nocc += m_clusters[i].size();
         double rg2 = 0.0;
 
         for (unsigned int j=0; j<m_clusters[i].size(); j++)
@@ -324,32 +328,21 @@ void SurfaceCharge::ClusterAnalysis()
         rg2 /= m_clusters[i].size();
         rg2 /= m_polymer_length;
         h_cluster_rg.data[i] = sqrt(rg2);
+        m_cluster_avg_rg += h_cluster_rg.data[i];
         }
+    m_cluster_avg_nocc /= m_cluster_count;
+    m_cluster_avg_rg /= m_cluster_count;
 
     // Debug Output
-    for (unsigned int i=0; i<m_cluster_count; i++)
+    /*for (unsigned int i=0; i<m_cluster_count; i++)
         {
         if (m_timestep%200 == 0)
             {
             std::cout<<"Cluster "<<i<<" contains "<<m_clusters[i].size()<<" polymers. ";
             std::cout<<"Cluster center of mass is: "<<h_cluster_com.data[i].x<<", "<<h_cluster_com.data[i].y<<", "<<h_cluster_com.data[i].z<<". ";
             std::cout<<"Cluster rG: "<<h_cluster_rg.data[i]<<std::endl;
-            
-            // output monomer positions
-            /*for (unsigned int j=0; j<m_clusters[i].size(); j++)
-                {
-                const unsigned int polymer_idx = m_clusters[i][j];
-                cout<<"Polymer "<<j<<" center of mass: "<<h_polymer_com.data[polymer_idx].x<<", "<<h_polymer_com.data[polymer_idx].y<<", "<<h_polymer_com.data[polymer_idx].z<<endl;
-
-                for (unsigned int k=0; k<m_polymer_length; k++)
-                    {
-                    const unsigned int monomer_idx = h_polymer_index_map.data[m_polymer_indexer(k, polymer_idx)];
-
-                    cout<<"Polymer "<<j<<" monomer "<<k<<" :"<<h_pos.data[monomer_idx].x<<", "<<h_pos.data[monomer_idx].y<<", "<<h_pos.data[monomer_idx].z<<endl;
-                    }
-                }*/
             }
-        }
+        }*/
     }
 
 /*! Function for calculating the forces between clusters. 
@@ -372,7 +365,7 @@ void SurfaceCharge::Forces()
     vector<Scalar4> cluster_forces(m_cluster_count, make_scalar4(0.0, 0.0, 0.0, 0.0));
 
     // Since the Yukawa potential decays very slowly, we need a smoothing potential to take care of
-    // discontinuities at r_cut
+    // discontinuities at r_cut. This is done in the force loop below
 
     // Loop over all cluster pairs
     for (unsigned int i=0; i<m_cluster_count; i++)
@@ -423,10 +416,10 @@ void SurfaceCharge::Forces()
                 cluster_forces[j].z += force*dvec.z;
                 cluster_forces[j].w += 0.5*yukawa;
 
-                if (m_timestep%200 == 0)
+                /*if (m_timestep%200 == 0)
                     {
                     cout<<"force between "<<i<<", "<<j<<" charge_i: "<<charge_i<<", charge_j: "<<charge_j<<", prefactor_i: "<<prefactor_i<<", prefactor_j: "<<prefactor_j<<", dr: "<<dr<<", yukawa: "<<yukawa<<", force: "<<force<<endl;
-                    }
+                    }*/
                 }
             }
         }
@@ -451,11 +444,6 @@ void SurfaceCharge::Forces()
             {
             const unsigned int polymer_idx = m_clusters[i][j];
 
-            if (m_timestep%200 == 0)
-                {
-                //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<", "<<force_fraction.w<<"), cluster:"<<i<<std::endl;
-                }
-
             for (unsigned int k=0; k<m_polymer_length; k++)
                 {
                 const unsigned int monomer_idx = h_polymer_index_map.data[m_polymer_indexer(k, polymer_idx)];
@@ -463,8 +451,6 @@ void SurfaceCharge::Forces()
                 h_forces.data[monomer_idx].y = force_fraction.y;
                 h_forces.data[monomer_idx].z = force_fraction.z;
                 h_forces.data[monomer_idx].w = force_fraction.w;
-            
-                //std::cout<<"Applying force ("<<force_fraction.x<<", "<<force_fraction.y<<", "<<force_fraction.z<<") on monomer: "<<monomer_idx<<" in polymer: "<<polymer_idx<<" in cluster: "<<i<<std::endl;
                 }
             }
         }
@@ -558,6 +544,8 @@ vector<string> SurfaceCharge::getProvidedLogQuantities()
     {
     vector<string> list;
     list.push_back("surface_charge_energy");
+    list.push_back("cluster_avg_nocc");
+    list.push_back("cluster_avg_rg");
     return list;
     }
 
@@ -567,6 +555,14 @@ Scalar SurfaceCharge::getLogValue(const string& quantity, unsigned int timestep)
         {
         compute(timestep);
         return calcEnergySum();
+        }
+    else if (quantity == string("cluster_avg_nocc"))
+        {
+        return m_cluster_avg_nocc;
+        }
+    else if (quantity == string("cluster_avg_rg"))
+        {
+        return m_cluster_avg_rg;
         }
     else
         {
