@@ -114,6 +114,11 @@ class SurfaceCharge : public ForceCompute
         bool m_cluster_params_set, m_force_params_set;
         //! Average cluster occupation number and Rg
         Scalar m_cluster_avg_nocc, m_cluster_avg_rg;
+        //! Cluster distribution
+        vector<Scalar> m_cluster_distrib;
+        //! Cluster distribution samples
+        unsigned int m_cluster_distrib_samples, m_cluster_distrib_window;
+
 
         //! Internal function for remapping the particles to polymers
         void RemapPolymers();

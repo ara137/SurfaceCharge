@@ -333,6 +333,34 @@ void SurfaceCharge::ClusterAnalysis()
     m_cluster_avg_nocc /= m_cluster_count;
     m_cluster_avg_rg /= m_cluster_count;
 
+    // Sample cluster distribution
+    // Flush current cluster distribution and reset for new batch
+    if ((m_cluster_distrib_samples > 0) && (m_cluster_distrib_samples%m_cluster_distrib_window == 0))
+        {
+        char buffer[32];
+        sprintf(buffer, "%010d", m_timestep);
+        string filename = "clusterDistrib_" + (string)buffer + ".dat";
+        ofstream cluster_distrib_data(filename.c_str());
+
+        for (unsigned int i=0; i<m_cluster_distrib.size(); i++)
+            {
+            cluster_distrib_data<<i<<"\t"<<m_cluster_distrib[i]/m_cluster_distrib_window<<endl;
+            }
+        
+        m_cluster_distrib_samples = 0;
+        m_cluster_distrib.clear();
+        }
+
+    m_cluster_distrib.resize(m_polymer_count);
+    for (unsigned int i=0; i<m_cluster_count; i++)
+        {
+        m_cluster_distrib[m_clusters[i].size()] += 1.0;
+        }
+
+
+    m_cluster_distrib_samples++;
+
+
     // Debug Output
     /*for (unsigned int i=0; i<m_cluster_count; i++)
         {
@@ -510,6 +538,8 @@ void SurfaceCharge::computeForces(unsigned int timestep)
 void SurfaceCharge::setClusterParams(Scalar cluster_rcut)
     {
     m_cluster_rcut2 = cluster_rcut*cluster_rcut;
+    m_cluster_distrib_samples = 0;
+    m_cluster_distrib_window = 10000;
     m_cluster_params_set = true;
     std::cout<<"Cluster cutoff set to "<<cluster_rcut<<std::endl;
     }
