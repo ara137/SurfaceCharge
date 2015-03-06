@@ -116,6 +116,7 @@ class SurfaceCharge : public ForceCompute
         Scalar m_cluster_avg_nocc, m_cluster_avg_rg;
         //! Cluster distribution
         vector<Scalar> m_cluster_distrib;
+        vector<Scalar> m_cluster_distrib_rg;
         //! Cluster distribution samples
         unsigned int m_cluster_distrib_samples, m_cluster_distrib_window;
 

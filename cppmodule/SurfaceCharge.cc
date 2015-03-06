@@ -344,17 +344,29 @@ void SurfaceCharge::ClusterAnalysis()
 
         for (unsigned int i=0; i<m_cluster_distrib.size(); i++)
             {
-            cluster_distrib_data<<i<<"\t"<<m_cluster_distrib[i]/m_cluster_distrib_window<<endl;
+            cluster_distrib_data<<i<<"\t"<<(m_cluster_distrib[i]/m_cluster_distrib_window);
+            if (m_cluster_distrib[i] > 0)
+                {
+                cluster_distrib_data<<"\t"<<(m_cluster_distrib_rg[i]/m_cluster_distrib[i]);
+                }
+            else
+                {
+                cluster_distrib_data<<"\t"<<"0";
+                }
+            cluster_distrib_data<<endl;
             }
         
         m_cluster_distrib_samples = 0;
         m_cluster_distrib.clear();
+        m_cluster_distrib_rg.clear();
         }
 
     m_cluster_distrib.resize(m_polymer_count);
+    m_cluster_distrib_rg.resize(m_polymer_count);
     for (unsigned int i=0; i<m_cluster_count; i++)
         {
         m_cluster_distrib[m_clusters[i].size()] += 1.0;
+        m_cluster_distrib_rg[m_clusters[i].size()] += h_cluster_rg.data[i];
         }
 
 
@@ -408,11 +420,17 @@ void SurfaceCharge::Forces()
             
             if (dr2 < m_pot_rcut2)
                 {
-                const double charge_i = (1.0 + m_pot_kappa*h_cluster_rg.data[i])*m_pot_epsilon*h_cluster_rg.data[i]/m_pot_lambda;
-                const double charge_j = (1.0 + m_pot_kappa*h_cluster_rg.data[j])*m_pot_epsilon*h_cluster_rg.data[j]/m_pot_lambda;
+                // The radius of gyration underpredicts the size of the nanocolloid
+                // For a solid sphere, we know that R=sqrt(5/2)Rg, but this approach overpredicts the nanocolloid radius
+                // A factor of 1.3 seems to create sufficiently large colloids
+                const Scalar a_i = 1.3*h_cluster_rg.data[i];
+                const Scalar a_j = 1.3*h_cluster_rg.data[j];
 
-                const double prefactor_i = charge_i*exp(m_pot_kappa*h_cluster_rg.data[i])/(1.0 + m_pot_kappa*h_cluster_rg.data[i]);
-                const double prefactor_j = charge_j*exp(m_pot_kappa*h_cluster_rg.data[j])/(1.0 + m_pot_kappa*h_cluster_rg.data[j]);
+                const Scalar charge_i = (1.0 + m_pot_kappa*a_i)*m_pot_epsilon*a_i/m_pot_lambda;
+                const Scalar charge_j = (1.0 + m_pot_kappa*a_j)*m_pot_epsilon*a_j/m_pot_lambda;
+
+                const Scalar prefactor_i = charge_i*exp(m_pot_kappa*a_i)/(1.0 + m_pot_kappa*a_i);
+                const Scalar prefactor_j = charge_j*exp(m_pot_kappa*a_j)/(1.0 + m_pot_kappa*a_j);
                                 
                 const Scalar dr = sqrt(dr2);
 
