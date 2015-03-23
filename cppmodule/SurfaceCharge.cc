@@ -372,7 +372,6 @@ void SurfaceCharge::ClusterAnalysis()
 
     m_cluster_distrib_samples++;
 
-
     // Debug Output
     /*for (unsigned int i=0; i<m_cluster_count; i++)
         {
@@ -418,11 +417,13 @@ void SurfaceCharge::Forces()
             dvec = box.minImage(dvec);
             const Scalar dr2 = dot(dvec, dvec);
             
+            // unimers do not have a surface potential?
+            //if ((dr2 < m_pot_rcut2) && (m_clusters[i].size() > 1) && (m_clusters[j].size() > 1))
             if (dr2 < m_pot_rcut2)
                 {
                 // The radius of gyration underpredicts the size of the nanocolloid
                 // For a solid sphere, we know that R=sqrt(5/2)Rg, but this approach overpredicts the nanocolloid radius
-                // A factor of 1.3 seems to create sufficiently large colloids
+                // A factor of 1.3 produces better results
                 const Scalar a_i = 1.3*h_cluster_rg.data[i];
                 const Scalar a_j = 1.3*h_cluster_rg.data[j];
 
@@ -462,21 +463,25 @@ void SurfaceCharge::Forces()
                 cluster_forces[j].z += force*dvec.z;
                 cluster_forces[j].w += 0.5*yukawa;
 
-                /*if (m_timestep%200 == 0)
-                    {
-                    cout<<"force between "<<i<<", "<<j<<" charge_i: "<<charge_i<<", charge_j: "<<charge_j<<", prefactor_i: "<<prefactor_i<<", prefactor_j: "<<prefactor_j<<", dr: "<<dr<<", yukawa: "<<yukawa<<", force: "<<force<<endl;
+                //if (m_timestep%200 == 0)
+                    /*{
+                    cout<<"timestep: "<<m_timestep<<endl;
+                    cout<<"force between "<<i<<", "<<j<<endl;
+                    cout<<"charge_i: "<<charge_i<<", charge_j: "<<charge_j<<endl;
+                    cout<<"a_i: "<<a_i<<", a_j: "<<a_j<<endl;
+                    cout<<"r_i: "<<h_cluster_com.data[i].x<<", "<<h_cluster_com.data[i].y<<", "<<h_cluster_com.data[i].z<<endl;
+                    cout<<"r_j: "<<h_cluster_com.data[j].x<<", "<<h_cluster_com.data[j].y<<", "<<h_cluster_com.data[j].z<<endl;
+                    cout<<"prefactor_i: "<<prefactor_i<<", prefactor_j: "<<prefactor_j<<endl;
+                    cout<<"dr: "<<dr<<endl;
+                    cout<<"yukawa: "<<yukawa<<", force/dr: "<<force<<endl;
+                    cin.get();
                     }*/
                 }
             }
         }
 
     // First reset all forces of all particles
-    for (unsigned int i=0; i<m_group->getNumMembers(); i++)
-        {
-        h_forces.data[i].x = 0.0;
-        h_forces.data[i].y = 0.0;
-        h_forces.data[i].z = 0.0;
-        }
+    memset(h_forces.data, 0.0, sizeof(Scalar4)*m_pdata->getN());
 
     // Now distribute forces in each cluster onto all monomers in that cluster
     for (unsigned int i=0; i<m_cluster_count; i++)
@@ -536,6 +541,7 @@ void SurfaceCharge::computeForces(unsigned int timestep)
     // If particles have been resorted, update mapping
     if (m_particles_sorted)
         {
+        cout<<m_timestep<<": Surface Charge: Remapping polymers!"<<endl;
         RemapPolymers();
         }
 
