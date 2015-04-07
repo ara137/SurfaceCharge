@@ -103,7 +103,6 @@ void SurfaceCharge::RemapPolymers()
     ArrayHandle<unsigned int> h_polymer_index_map(m_polymer_index_map, access_location::host, access_mode::readwrite);
     ArrayHandle<unsigned int> h_tag(m_pdata->getTags(), access_location::host, access_mode::read);
 
-    //std::cout<<"SurfaceCharge: Remapping Polymers!"<<std::endl;
     // Update the mapping
     for (unsigned int i=0; i<m_group->getNumMembers(); i++)
         {
@@ -541,7 +540,6 @@ void SurfaceCharge::computeForces(unsigned int timestep)
     // If particles have been resorted, update mapping
     if (m_particles_sorted)
         {
-        cout<<m_timestep<<": Surface Charge: Remapping polymers!"<<endl;
         RemapPolymers();
         }
 
@@ -563,7 +561,7 @@ void SurfaceCharge::setClusterParams(Scalar cluster_rcut)
     {
     m_cluster_rcut2 = cluster_rcut*cluster_rcut;
     m_cluster_distrib_samples = 0;
-    m_cluster_distrib_window = 10000;
+    m_cluster_distrib_window = 20000;
     m_cluster_params_set = true;
     std::cout<<"Cluster cutoff set to "<<cluster_rcut<<std::endl;
     }
